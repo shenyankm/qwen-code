@@ -898,6 +898,62 @@ describe('ShellExecutionService', () => {
       },
     );
 
+    // Sibling of the abnormal-leader-exit case where the leader is ALIVE at
+    // cancel time: the group SIGTERM kills the leader (onExit flips `exited`
+    // inside the grace window) but a TERM-resistant member survives. The
+    // escalation must still SIGKILL the group — removing the group-liveness
+    // disjunct from the escalation makes this fail.
+    it('cancels a surviving POSIX group when the leader dies during the SIGTERM window', async () => {
+      vi.useFakeTimers();
+      let groupAlive = true;
+      mockProcessKill.mockImplementation((pid, signal) => {
+        if (signal === 0) {
+          // Leader (positive pid) stays alive for the pre-kill liveness gate;
+          // the group (-pid) reports alive until SIGKILL lands.
+          if (pid === -mockPtyProcess.pid && !groupAlive) {
+            throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
+          }
+          return true;
+        }
+        if (pid === -mockPtyProcess.pid && signal === 'SIGKILL') {
+          groupAlive = false;
+        }
+        return true;
+      });
+
+      try {
+        const abortController = new AbortController();
+        const handle = await ShellExecutionService.execute(
+          'python3 -c "signal.SIG_IGN" & sleep 5',
+          '/test/dir',
+          onOutputEventMock,
+          abortController.signal,
+          true,
+          shellExecutionConfig,
+        );
+        const settled = handle.result;
+
+        abortController.abort();
+        // The leader dies from the group SIGTERM inside the grace window.
+        mockPtyProcess.onExit.mock.calls[0][0]({ exitCode: 0, signal: 15 });
+        await vi.advanceTimersByTimeAsync(1000);
+        const result = await settled;
+
+        const groupKillSignals = mockProcessKill.mock.calls
+          .filter(
+            ([pid, signal]) => pid === -mockPtyProcess.pid && signal !== 0,
+          )
+          .map(([, signal]) => signal);
+        expect(result.aborted).toBe(true);
+        expect(groupKillSignals).toEqual(['SIGTERM', 'SIGKILL']);
+        expect(groupAlive).toBe(false);
+        expect(mockPtyProcess.kill).not.toHaveBeenCalled();
+      } finally {
+        mockProcessKill.mockImplementation(() => true);
+        vi.useRealTimers();
+      }
+    });
+
     it.each([
       { exitCode: 0, signal: 0, groupAlive: true },
       { exitCode: 7, signal: 0, groupAlive: true },

@@ -5168,8 +5168,9 @@ export class CoreToolScheduler {
         }
         const cancelledResponse = createCancelledResponse(
           scheduledCall.request,
-          // Reached only after `execute()` settled with a result.
-          TOOL_CANCELLED_AFTER_COMPLETION_MESSAGE,
+          toolResult.aborted
+            ? TOOL_CANCELLED_BEFORE_COMPLETION_MESSAGE
+            : TOOL_CANCELLED_AFTER_COMPLETION_MESSAGE,
           executionStatus,
           artifacts,
           preserved?.persistedOutputFiles,

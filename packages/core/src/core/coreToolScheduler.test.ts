@@ -12714,6 +12714,46 @@ describe('CoreToolScheduler telemetry spans', () => {
     ]);
   });
 
+  // A cooperative tool (e.g. a foreground subagent) can stop mid-run and
+  // resolve `aborted: true` while the parent signal is still alive, so the
+  // cancellation only lands later, during post-processing. The sibling site
+  // `cancelAfterPostProcessing` must then say the work never completed —
+  // claiming it "had already completed" makes the model skip a task that
+  // stopped halfway (removing the sibling-site selection makes this fail).
+  it('tells the model a mid-run abort never completed when cancellation lands during post-processing', async () => {
+    const abortController = new AbortController();
+    const messageBus = {
+      request: vi.fn(async (request: { eventName: string }) => {
+        if (request.eventName === 'PostToolUse') {
+          abortController.abort();
+        }
+        return {
+          type: MessageBusType.HOOK_EXECUTION_RESPONSE,
+          correlationId: `${request.eventName}-hook`,
+          success: true,
+          output: { decision: 'allow' },
+        };
+      }),
+    };
+    const { completedCalls } = await runSingleTool({
+      abortController,
+      messageBus,
+      disableHooks: false,
+      execute: vi.fn().mockResolvedValue({
+        llmContent: 'partial',
+        returnDisplay: 'partial',
+        aborted: true,
+      }),
+    });
+
+    const completedCall = completedCalls[0] as CompletedToolCall;
+    expect(completedCall.status).toBe('cancelled');
+    expect(completedCall.response.executionStatus).toBe('cancelled');
+    const responseText = JSON.stringify(completedCall.response.responseParts);
+    expect(responseText).toContain('User cancelled tool execution.');
+    expect(responseText).not.toContain('had already completed');
+  });
+
   it('classifies a thrown MCP invocation as an MCP execution error', async () => {
     const mcpTool = new DiscoveredMCPTool(
       {

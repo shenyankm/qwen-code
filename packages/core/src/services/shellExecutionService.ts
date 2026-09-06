@@ -2373,8 +2373,7 @@ export class ShellExecutionService {
               await new Promise((res) => setTimeout(res, SIGKILL_TIMEOUT_MS));
               if (
                 !exited ||
-                (afterLeaderExit &&
-                  ShellExecutionService.isPtyActive(-ptyProcess.pid))
+                ShellExecutionService.isPtyActive(-ptyProcess.pid)
               ) {
                 // Escalate to SIGKILL if still running
                 process.kill(-ptyProcess.pid, 'SIGKILL');
