@@ -1924,6 +1924,7 @@ export class ShellToolInvocation extends BaseToolInvocation<
       return {
         llmContent: message,
         returnDisplay: message,
+        exitCode: 0,
       };
     }
 
@@ -1993,6 +1994,7 @@ export class ShellToolInvocation extends BaseToolInvocation<
       return {
         llmContent: `sed edit applied to ${edit.filePath}.`,
         returnDisplay: display,
+        exitCode: 0,
       };
     } catch (err) {
       if (err instanceof SedEditCancelledError) {
@@ -3121,10 +3123,9 @@ export class ShellToolInvocation extends BaseToolInvocation<
       returnDisplay: returnDisplayMessage,
       ...(persistedOutputFiles !== undefined ? { persistedOutputFiles } : {}),
       ...(wasUserCancelled ? { aborted: true } : {}),
-      // Forward the real exit status only from this foreground-completion
-      // return. The promoted-to-background and sed-edit returns omit it, so the
-      // experience gate classifies those from status alone rather than from
-      // `Exit Code:` text the model's own command or stdout could spoof.
+      // Forward the process exit status, including a completed promote refusal.
+      // Sed edits report their own completion code; running background commands
+      // omit it. Never infer completion from model-controlled output text.
       exitCode: result.exitCode,
       ...executionError,
     };

@@ -13544,6 +13544,113 @@ describe('CoreToolScheduler telemetry spans', () => {
     expect(responseText).not.toContain('had already completed');
   });
 
+  it.each(
+    (['execution', 'post-processing'] as const).flatMap((cancelAt) =>
+      [3, null].map((exitCode) => ({ cancelAt, exitCode })),
+    ),
+  )(
+    'preserves a completed shell failure during $cancelAt cancellation (exitCode: $exitCode)',
+    async ({ cancelAt, exitCode }) => {
+      const failureMessage =
+        exitCode === null
+          ? 'Command terminated by signal 15'
+          : 'Command exited with code 3';
+      const abortController = new AbortController();
+      const messageBus = {
+        request: vi.fn(async (request: { eventName: string }) => {
+          if (
+            cancelAt === 'post-processing' &&
+            request.eventName === 'PostToolUseFailure'
+          ) {
+            abortController.abort();
+          }
+          return {
+            type: MessageBusType.HOOK_EXECUTION_RESPONSE,
+            correlationId: `${request.eventName}-hook`,
+            success: true,
+            output: { decision: 'allow' },
+          };
+        }),
+      };
+      const { completedCalls } = await runSingleTool({
+        abortController,
+        messageBus,
+        disableHooks: false,
+        execute: vi.fn().mockImplementation(async () => {
+          if (cancelAt === 'execution') abortController.abort();
+          return {
+            llmContent: failureMessage,
+            returnDisplay: failureMessage,
+            error: {
+              message: failureMessage,
+              type: ToolErrorType.SHELL_EXECUTE_ERROR,
+            },
+            exitCode,
+            persistedOutputFiles: ['/tmp/completed-shell-output.txt'],
+          };
+        }),
+      });
+
+      const call = completedCalls[0] as CompletedToolCall;
+      expect(call.status).toBe('cancelled');
+      expect(call.response.executionStatus).toBe('error');
+      expect(call.response.persistedOutputFiles).toEqual([
+        '/tmp/completed-shell-output.txt',
+      ]);
+      const responseText = JSON.stringify(call.response.responseParts);
+      expect(responseText).toContain('The tool had already completed');
+      expect(responseText).not.toContain(
+        'User intentionally cancelled this tool call. Stop',
+      );
+      expect(responseText).not.toContain(failureMessage);
+      if (cancelAt === 'execution') {
+        expect(JSON.stringify(messageBus.request.mock.calls)).toContain(
+          'The tool had already completed',
+        );
+      }
+    },
+  );
+
+  it.each([3, null])(
+    'keeps a cooperative shell cancellation ahead of exitCode %s',
+    async (exitCode) => {
+      const abortController = new AbortController();
+      const { completedCalls } = await runSingleTool({
+        abortController,
+        execute: vi.fn().mockImplementation(async () => {
+          abortController.abort();
+          return {
+            llmContent: 'interrupted',
+            returnDisplay: 'interrupted',
+            aborted: true,
+            exitCode,
+          };
+        }),
+      });
+
+      const call = completedCalls[0] as CompletedToolCall;
+      expect(call.status).toBe('cancelled');
+      expect(call.response.executionStatus).toBe('cancelled');
+      expect(JSON.stringify(call.response.responseParts)).not.toContain(
+        'had already completed',
+      );
+    },
+  );
+
+  it('forwards a structured shell exit code on the success response', async () => {
+    const { completedCalls } = await runSingleTool({
+      execute: vi.fn().mockResolvedValue({
+        llmContent: 'completed',
+        returnDisplay: 'completed',
+        exitCode: 0,
+      }),
+    });
+
+    const call = completedCalls[0] as CompletedToolCall;
+    expect(call.status).toBe('success');
+    expect(call.response.exitCode).toBe(0);
+  });
+
   it('treats an error-shaped cancellation as cancelled, not completed work', async () => {
     // R21-2: web_search reports a user cancellation as a resolved error result
     // (WEB_SEARCH_BACKEND_FAILED); exit_plan_mode did the same via its approval

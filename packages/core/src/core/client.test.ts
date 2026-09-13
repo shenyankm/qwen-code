@@ -10346,29 +10346,32 @@ hello
         expect(client['pendingExperienceOutcomes'].size).toBe(0);
       });
 
-      it('counts cancellation after completion without staging a retry outcome', () => {
-        vi.spyOn(client['config'], 'getProjectRoot').mockReturnValue(
-          '/project',
-        );
-        client.recordCompletedToolCall(
-          'edit',
-          { path: '/project/.qwen/skills/my-skill/SKILL.md' },
-          {
-            callId: 'completed-edit',
-            status: 'cancelled',
-            executionStatus: 'success',
-          },
-        );
+      it.each(['success', 'error'] as const)(
+        'counts cancellation after %s completion without staging a retry outcome',
+        (executionStatus) => {
+          vi.spyOn(client['config'], 'getProjectRoot').mockReturnValue(
+            '/project',
+          );
+          client.recordCompletedToolCall(
+            'edit',
+            { path: '/project/.qwen/skills/my-skill/SKILL.md' },
+            {
+              callId: 'completed-edit',
+              status: 'cancelled',
+              executionStatus,
+            },
+          );
 
-        expect(client['toolCallCount']).toBe(1);
-        expect(client['skillsModifiedInSession']).toBe(true);
-        expect(client['experienceSignalsSinceReview']).toEqual({
-          retryArc: false,
-          hasSubstantiveWork: true,
-          failedToolNames: new Set(),
-        });
-        expect(client['pendingExperienceOutcomes'].size).toBe(0);
-      });
+          expect(client['toolCallCount']).toBe(1);
+          expect(client['skillsModifiedInSession']).toBe(true);
+          expect(client['experienceSignalsSinceReview']).toEqual({
+            retryArc: false,
+            hasSubstantiveWork: true,
+            failedToolNames: new Set(),
+          });
+          expect(client['pendingExperienceOutcomes'].size).toBe(0);
+        },
+      );
 
       it('stages reliable outcomes but treats an unknown shell exit as neutral', () => {
         client.recordCompletedToolCall('edit', undefined, {

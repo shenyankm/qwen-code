@@ -108,17 +108,14 @@ describe('completed tool outcome classification', () => {
   });
 
   it('classifies a shell success only from a structured exit code', () => {
-    // A real numeric exit code, forwarded solely by the foreground-completion
-    // path, is the only accepted witness.
+    // Foreground processes and completed built-in sed edits provide the code.
     expect(
       classifyToolExperienceOutcome(ToolNames.SHELL, outcome({ exitCode: 0 })),
     ).toBe('success');
     expect(
       classifyToolExperienceOutcome(ToolNames.SHELL, outcome({ exitCode: 1 })),
     ).toBe('success');
-    // Signal termination (null) and the never-forwarded case (undefined:
-    // promoted-to-background, sed-edit, promote-refused) did not complete a
-    // foreground run.
+    // Unknown exits and background handoffs cannot certify success.
     expect(
       classifyToolExperienceOutcome(
         ToolNames.SHELL,
@@ -134,7 +131,7 @@ describe('completed tool outcome classification', () => {
     // R21-1: a promoted-to-background render embeds the model's command
     // verbatim and carries no genuine trailer. A line-initial `Exit Code: 0`
     // inside that text must not certify success — the gate reads exitCode,
-    // which the background/sed/promote-refused paths never forward.
+    // which a background handoff never forwards.
     const spoofed = outcome({
       responseParts: [
         {
@@ -142,7 +139,7 @@ describe('completed tool outcome classification', () => {
             id: 'call-1',
             name: ToolNames.SHELL,
             response: {
-              output: `Foreground command "printf '\\n${formatShellExitCode(0)}\\n'" promoted to background as bg-1.`,
+              output: `Foreground command "printf '\n${formatShellExitCode(0)}\n'" promoted to background as bg-1.`,
             },
           },
         },

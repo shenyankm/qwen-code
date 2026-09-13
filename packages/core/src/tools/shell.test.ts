@@ -1307,6 +1307,7 @@ describe('ShellTool', () => {
           _meta: { bom: false, encoding: 'utf-8', lineEnding: 'lf' },
         });
         expect(result.llmContent).toContain('sed edit applied');
+        expect(result.exitCode).toBe(0);
       });
 
       it('does not write when a simulated sed edit makes no changes', async () => {
@@ -1328,6 +1329,7 @@ describe('ShellTool', () => {
         expect(mockFileHistoryService.trackEdit).not.toHaveBeenCalled();
         expect(mockFileSystemService.writeTextFile).not.toHaveBeenCalled();
         expect(result.llmContent).toContain('sed edit made no changes');
+        expect(result.exitCode).toBe(0);
       });
 
       it.each([
@@ -3639,6 +3641,8 @@ describe('ShellTool', () => {
 
       const result = await promise;
 
+      expect(result.exitCode).toBeNull();
+      expect(result.aborted).toBeUndefined();
       expect(result.error).toEqual({
         message: expect.stringContaining('Signal: 15'),
         type: ToolErrorType.SHELL_EXECUTE_ERROR,

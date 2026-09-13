@@ -39,16 +39,24 @@ prefilter tradeoff; the review agent still decides whether anything merits savin
 
 ### Experience signals
 
-| Signal               | Definition                                                                           | Detection                                                                                                                                                                                                                                                                         |
-| -------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `retryArc`           | A tool fails and the same tool later succeeds: a recovered retry                     | Classify structured `status` / `executionStatus` at completion and stage by `callId`; consume after the corresponding `ToolResult` or `Retry` is accepted, or after direct `LlmClient.addHistory`. Shell also requires a structured numeric exit code; unknown exits are neutral. |
-| `userSteer`          | The user intervenes while the agent works, expecting a different approach or outcome | Not inferred from history. Set when `LlmClient` completes `SendMessageType.Steer`, or accepts a ToolResult submission carrying steer input.                                                                                                                                       |
-| `hasSubstantiveWork` | The window includes file writing, notebook editing, shell execution, or exec         | Used only by the backstop to exclude sessions using only read, list, or search tools.                                                                                                                                                                                             |
+| Signal               | Definition                                                                           | Detection                                                                                                                                                                                                                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `retryArc`           | A tool fails and the same tool later succeeds: a recovered retry                     | Classify structured `status` / `executionStatus` at completion and stage by `callId`; consume after the corresponding `ToolResult` or `Retry` is accepted, or after direct `LlmClient.addHistory`. Shell success also requires a structured numeric completion code; errors are classified by execution status. |
+| `userSteer`          | The user intervenes while the agent works, expecting a different approach or outcome | Not inferred from history. Set when `LlmClient` completes `SendMessageType.Steer`, or accepts a ToolResult submission carrying steer input.                                                                                                                                                                     |
+| `hasSubstantiveWork` | The window includes file writing, notebook editing, shell execution, or exec         | Used only by the backstop to exclude sessions using only read, list, or search tools.                                                                                                                                                                                                                           |
 
 A separate `testFlip` (red-to-green test) signal was considered, but it always
 implies `retryArc` in the same scan: the successful test closes the retry arc.
 It adds nothing to the gate, so it is folded into `retryArc` without a separate
 test-command detector.
+
+Foreground shell results carry the process exit code. Built-in sed edits return
+0 after a successful write or no-op, expressing the completed shell-compatible
+operation without claiming a process was spawned. Background handoffs have no
+completion code and cannot close a retry arc. A completed foreground result from
+a refused promotion still carries its actual exit code. Rendered output is never
+used as completion evidence. Error responses need no exit code: the scheduler
+already identifies execution failures through structured status.
 
 ### Window and duplicate prevention
 
@@ -68,6 +76,15 @@ they count but contribute neither a successful nor a failed experience. Set
 `userSteer` on Steer arrival or accepted ToolResult submissions carrying steer.
 Reset the signals and count together when review is scheduled or an equivalent
 review is already running. Session reset also clears unconsumed outcome sidecars.
+
+If cancellation arrives after a shell failure settled, a supplied exit status
+without `aborted: true` preserves `executionStatus: error` and the completed-work
+cancellation notice. This includes `null` when a child_process command terminated
+by a signal; `undefined` means the tool supplied no foreground settlement evidence.
+An explicit `aborted: true` takes precedence with either a numeric or null code;
+error-only cancellation results without completion evidence remain
+cancelled at execution settlement. Both scheduler cancellation boundaries
+preserve already-completed shell failures.
 
 Tools cancelled during execution must return `aborted: true`. The scheduler sets
 `executionStatus: cancelled`, so the client neither counts the call nor stages a
@@ -135,3 +152,10 @@ review finishes.
   failure followed by success still creates one. Removing the `exec` set entry or
   cancellation flag must make the respective regression tests fail.
 - E2E test plan: `.qwen/e2e-tests/2026-08-13-auto-skill-experience-trigger.md`.
+- Shell completion regression: completed failures retain their error execution
+  status after late cancellation, including a real non-PTY process terminated by
+  SIGTERM with a null exit code; cooperative cancellation remains cancelled.
+  Built-in sed failure/recovery and foreground shell failure/recovery pass
+  through the scheduler, CLI outcome adapter, history acceptance, and real review
+  gate: four calls skip and five schedule once. Removing the shell or scheduler
+  completion-code forwarding must fail the respective regression.

@@ -5493,16 +5493,14 @@ export class CoreToolScheduler {
       const settledExecutionStatus: ToolExecutionStatus = toolResult.error
         ? 'error'
         : 'success';
-      // This branch is reached only when the parent aborted the call. A
-      // cancellation is the dominant event: whether the tool reported the
-      // interruption as an error result (web_search, exit_plan_mode) or as a
-      // cooperative aborted flag (shell), it did not complete its work, so
-      // record 'cancelled' — never 'error', which the experience gate counts as
-      // produced work. Only an abort-unaware tool that resolved a clean,
-      // error-free result finished before the abort landed; keep that 'success'
-      // so already-settled work is preserved.
+      // Error-only results can report interruption (e.g. web_search). A shell
+      // exit status, including null for signal termination, records settlement;
+      // an explicit cooperative abort still takes precedence.
       const cancelledSettleStatus: ToolExecutionStatus =
-        toolResult.error || toolResult.aborted ? 'cancelled' : 'success';
+        toolResult.aborted ||
+        (toolResult.error && toolResult.exitCode === undefined)
+          ? 'cancelled'
+          : settledExecutionStatus;
       executionStatus =
         aborted || toolResult.aborted ? 'cancelled' : settledExecutionStatus;
       executionSettled = true;
@@ -5525,13 +5523,11 @@ export class CoreToolScheduler {
       }
       if (aborted) {
         // PostToolUseFailure Hook
-        // The message must match cancelledSettleStatus: 'success' means the work
-        // finished before the abort landed (tell the model it already
-        // completed); anything else was interrupted mid-flight.
+        // Both successful and failed completed work need the AFTER notice.
         let cancelMessage =
-          cancelledSettleStatus === 'success'
-            ? TOOL_CANCELLED_AFTER_COMPLETION_MESSAGE
-            : TOOL_CANCELLED_BEFORE_COMPLETION_MESSAGE;
+          cancelledSettleStatus === 'cancelled'
+            ? TOOL_CANCELLED_BEFORE_COMPLETION_MESSAGE
+            : TOOL_CANCELLED_AFTER_COMPLETION_MESSAGE;
         let failureHookArtifacts: ToolArtifact[] | undefined;
         if (hooksEnabled && messageBus) {
           const failureHookResult = await this.withHookSpan(

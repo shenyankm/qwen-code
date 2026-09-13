@@ -552,11 +552,10 @@ export interface ToolResult {
   aborted?: boolean;
 
   /**
-   * Structured shell exit status, set only by the shell foreground-completion
-   * path. Lets the experience gate classify a shell outcome from a real exit
-   * code instead of scanning rendered output text, which backgrounded,
-   * sed-edit, and promote-refused renders never carry and command output can
-   * spoof.
+   * Structured foreground shell exit status, or 0 for a completed built-in sed
+   * edit (including a no-op). Null includes a process terminated by a signal;
+   * undefined means no foreground settlement evidence. Background handoffs omit
+   * it. An explicit aborted flag still takes precedence over this evidence.
    */
   exitCode?: number | null;
 

@@ -38,13 +38,18 @@ functionCall 进入经验窗口。因此在 issue #9062 原定的四种工具之
 
 | 信号                 | 定义                                                                | 检测方式                                                                                                                                                                                                                           |
 | -------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `retryArc`           | 某工具失败后，同一工具出现成功结果——试错且被克服                    | 工具完成时按结构化 `status` / `executionStatus` 分类，并以 `callId` 暂存；在对应 `ToolResult` 或 `Retry` 被接受，或直接通过 `LlmClient.addHistory` 写入 history 后消费。shell 还必须携带结构化的数字退出码，未知退出状态为 neutral |
+| `retryArc`           | 某工具失败后，同一工具出现成功结果——试错且被克服                    | 工具完成时按结构化 `status` / `executionStatus` 分类，并以 `callId` 暂存；在对应 `ToolResult` 或 `Retry` 被接受，或直接通过 `LlmClient.addHistory` 写入 history 后消费。shell 成功还必须携带结构化的数字完成码；错误按执行状态分类 |
 | `userSteer`          | 用户在 agent 工作中途插话（steer 消息）——"用户期望不同的方法或结果" | 不由 history 推断；`LlmClient` 在 `SendMessageType.Steer` 完成时，或被接受的 `ToolResult` 提交附带 steer 时置位                                                                                                                    |
 | `hasSubstantiveWork` | 窗口内完成过写文件、编辑 notebook、执行 shell 或 exec               | 仅用于兜底通道，排除仅调用读取、列表或搜索工具的会话                                                                                                                                                                               |
 
 > 曾设想过独立的 `testFlip`（测试红转绿）信号，但它为真时 `retryArc` 在同一次扫描中
 > 必然为真（转绿的那次成功同时闭合试错弧），对门控决策零增量，故合并进 `retryArc`，
 > 不为它单独维护测试命令识别。
+
+前台 shell 结果携带进程退出码。内建 sed 编辑在写入成功或成功 no-op 后返回 0，表示
+shell 兼容操作已经完成，不表示启动过进程。转入后台的结果没有完成码，不能闭合重试弧；
+promote 被拒绝但前台命令已完成的结果仍携带真实退出码。渲染文本永远不作为完成证据。
+错误响应无需退出码，调度器已通过结构化状态标识执行失败。
 
 ### 窗口（防重复触发）
 
@@ -58,6 +63,12 @@ functionCall 进入经验窗口。因此在 issue #9062 原定的四种工具之
 后才取消的调用保持 `status: cancelled`，但 `executionStatus` 保留真实的 `success` 或 `error`，因此仍计数但不贡献 success / failure。`Steer` 到达或被接受的 ToolResult 附带
 steer 时置位 `userSteer`。评审被调度或已有同类评审在运行时，累计窗口与计数一起清零；
 session reset 还会清除尚未消费的 outcome sidecar。
+
+如果取消发生在 shell 失败结算之后，已提供退出状态且无 `aborted: true` 会保留
+`executionStatus: error` 及“工作已完成”的取消文案。这包含 child_process 命令被信号终止时
+返回的 `null`；`undefined` 才表示工具没有提供前台结算证据。显式 `aborted: true` 优先，
+即使同时携带数字或 null 退出码也仍视为取消；没有完成证据的 error-only 取消结果同样保持取消状态。
+后者在执行结果交付调度器时判定；调度器的两个取消边界都保留已经完成的 shell 失败状态。
 
 运行中取消的工具必须返回 `aborted: true`，由调度器标记
 `executionStatus: cancelled`，客户端既不计数，也不暂存失败经验。Workflow 的运行前
@@ -114,3 +125,8 @@ in-flight 去重检查在门控之后，因此 `already_running` 本身即代表
   不计数、不暂存失败，随后成功不形成 retry arc；真实失败后成功仍形成 retry arc。
   分别撤销 `exec` 集合项和取消标志，必须使对应回归测试失败。
 - E2E 测试计划见 `.qwen/e2e-tests/2026-08-13-auto-skill-experience-trigger.md`。
+- shell 完成回归：失败已完成后才取消，保留真实 error 执行状态，包括真实非 PTY 进程
+  被 SIGTERM 终止、退出码为 null 的场景；协作式中途取消仍为
+  cancelled。内建 sed 失败恢复和前台 shell 失败恢复经过调度器、CLI outcome adapter、
+  history 接收和真实 review 门控：4 次调用跳过，5 次只调度一次。撤销 shell 或调度器的
+  完成码转发，必须使相应回归测试失败。

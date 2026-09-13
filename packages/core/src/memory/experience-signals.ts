@@ -27,12 +27,9 @@ export interface CompletedToolCallOutcome {
   errorType?: ToolErrorType;
   responseParts?: readonly Part[];
   /**
-   * Structured shell exit status, forwarded only by the foreground-completion
-   * path that actually ran a process to term. Absent for renders that never
-   * carry a genuine exit code — promoted-to-background, sed-edit,
-   * promote-refused — so the gate below classifies from a real exit code
-   * instead of scanning output text that the model's own command or arbitrary
-   * stdout can spoof with a line-initial `Exit Code: `.
+   * Structured foreground shell exit status, or 0 for a completed built-in sed
+   * edit. Background handoffs omit it. Successful shell experiences require
+   * this completion evidence; rendered command text and stdout are untrusted.
    */
   exitCode?: number | null;
 }
