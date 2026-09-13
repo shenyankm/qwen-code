@@ -338,6 +338,23 @@ describe('ShellExecutionService', () => {
     return { result, handle, abortController };
   };
 
+  const simulatePtyCancellation = async (
+    command: string,
+    simulation: Parameters<typeof simulateExecution>[1],
+  ) => {
+    vi.useFakeTimers();
+    try {
+      const execution = simulateExecution(command, simulation);
+      // Cancellation can outlive handle.result; drain it before mocks reset.
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await execution;
+      expect(vi.getTimerCount()).toBe(0);
+      return result;
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
   describe('child environment sanitization (#6601)', () => {
     it('strips Qwen-internal daemon secrets from the pty child env while keeping user vars and third-party credentials', async () => {
       // Replace (not mutate in place): this file restores process.env by
@@ -410,7 +427,7 @@ describe('ShellExecutionService', () => {
     ])('classifies a dispatched PTY cancel: %j', async (expected) => {
       mockPlatform.mockReturnValue('linux');
       mockProcessKill.mockReturnValue(true);
-      const { result } = await simulateExecution(
+      const { result } = await simulatePtyCancellation(
         'command',
         (pty, controller) => {
           pty.onData.mock.calls[0][0]('completed\n');
@@ -454,7 +471,7 @@ describe('ShellExecutionService', () => {
     });
 
     it('settles PTY cancellation when the abort reason name getter throws', async () => {
-      const { result } = await simulateExecution(
+      const { result } = await simulatePtyCancellation(
         'command',
         (pty, controller) => {
           controller.abort({
@@ -1142,7 +1159,7 @@ describe('ShellExecutionService', () => {
     );
 
     it('should abort a running process and set the aborted flag', async () => {
-      const { result } = await simulateExecution(
+      const { result } = await simulatePtyCancellation(
         'sleep 10',
         (pty, abortController) => {
           abortController.abort();
@@ -1155,7 +1172,7 @@ describe('ShellExecutionService', () => {
     });
 
     it('signal.reason = { kind: "cancel" } still tree-kills (same as default)', async () => {
-      const { result } = await simulateExecution(
+      const { result } = await simulatePtyCancellation(
         'sleep 10',
         (pty, abortController) => {
           abortController.abort({ kind: 'cancel' } satisfies ShellAbortReason);
