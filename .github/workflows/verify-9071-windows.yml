@@ -1,0 +1,67 @@
+name: PR 9071 Windows PTY validation (fork only)
+
+on:
+  push:
+    branches: ['sheny/verify-9071-windows-20260920']
+
+permissions:
+  contents: read
+
+jobs:
+  windows-pty:
+    if: github.repository == 'shenyankm/qwen-code'
+    runs-on: windows-2022
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '22.x'
+          cache: npm
+      - name: Verify exact production source and runner
+        run: |
+          git diff --exit-code 977a699442a03f43f67b983d5dfb1f3d9ce9d7d7 HEAD -- packages package.json package-lock.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git rev-parse HEAD
+          node --version
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber
+          $validationTemp = Join-Path $env:RUNNER_WORKSPACE 'qwen-pty-validation-temp'
+          New-Item -ItemType Directory -Force -Path $validationTemp | Out-Null
+          "TEMP=$validationTemp" >> $env:GITHUB_ENV
+          "TMP=$validationTemp" >> $env:GITHUB_ENV
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+      - name: Install, build and bundle unmodified PR source
+        id: install
+        run: npm ci --prefer-offline --no-audit --progress=false
+      - name: Real ConPTY and process-tree validation
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        timeout-minutes: 12
+        run: |
+          node scripts/windows-pty-live-check.mjs 2>&1 | Tee-Object artifacts/windows-pty-console.log
+          exit $LASTEXITCODE
+      - name: Existing focused shell regression suites
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: packages/core
+        timeout-minutes: 8
+        run: |
+          npx vitest run src/services/shellExecutionService.test.ts src/tools/shell.test.ts --reporter=default --reporter=json --outputFile=../../artifacts/shell-unit-results.json 2>&1 | Tee-Object ../../artifacts/shell-unit-console.log
+          exit $LASTEXITCODE
+      - name: Typecheck
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        timeout-minutes: 8
+        run: |
+          npm run typecheck 2>&1 | Tee-Object artifacts/typecheck.log
+          exit $LASTEXITCODE
+      - name: Upload validation evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-pty-validation
+          path: artifacts/
+          retention-days: 14
